@@ -88,6 +88,37 @@ jobs:
           print("Vérification des deux correctifs terminée.")
           PY
 
+      - name: Patch LibreSSL generated EC curve header
+        run: |
+          python3 - <<'PYTHON'
+          from pathlib import Path
+
+          path = Path("TMessagesProj/jni/libressl/update.sh")
+          if not path.is_file():
+              raise SystemExit("Script LibreSSL introuvable.")
+
+          source = path.read_text(encoding="utf-8")
+          marker = "# add the libcrypto symbol export list"
+
+          patch = '''# Copy the generated OpenBSD EC curve table header.
+          if [ ! -f "$libcrypto_src/ec/ec_curve_tables.h" ]; then
+              echo "Erreur : ec_curve_tables.h absent de la source OpenBSD."
+              exit 1
+          fi
+          mkdir -p crypto/ec
+          $CP "$libcrypto_src/ec/ec_curve_tables.h" crypto/ec/ec_curve_tables.h
+
+          '''
+
+          if "Copy the generated OpenBSD EC curve table header." not in source:
+              if marker not in source:
+                  raise SystemExit("Point d'insertion LibreSSL introuvable.")
+              source = source.replace(marker, patch + marker, 1)
+              path.write_text(source, encoding="utf-8")
+
+          print("Correctif LibreSSL prêt.")
+          PYTHON
+
       - name: Create media3 compatibility link
         run: |
           if [ -L TMessagesProj_Modules/media3 ]; then

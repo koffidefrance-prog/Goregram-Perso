@@ -1,74 +1,157 @@
-name: Build
+name: Build Goregram Perso
 
 on:
   workflow_dispatch:
-    branches:
-        - '**'
   push:
     branches:
-        - '**'
+      - master
 
-permissions: write-all
+permissions:
+  contents: read
 
 jobs:
   build:
-    name: Build
+    name: Build APK (${{ matrix.target }})
     runs-on: ubuntu-latest
-    continue-on-error: true
+
     strategy:
+      fail-fast: false
       matrix:
-        target: ['gcc', 'clang']
+        target: [gcc, clang]
+
     steps:
-      - uses: actions/checkout@main
+      - name: Checkout repository and submodules
+        uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
+
       - name: Set swap space
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 30
-      - uses: actions/setup-java@main
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '21'
-      - name: Install required dependencies
+
+      - name: Install dependencies
         run: |
-          sudo apt install meson gperf
+          sudo apt-get update
+          sudo apt-get install -y meson gperf
+
+      - name: Apply Android library compatibility patches
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = [
+              Path("TMessagesProj/lib/jlatexmath/jlatexmath/build.gradle"),
+              Path("TMessagesProj_Modules/media/common_library_config.gradle"),
+          ]
+
+          updates = []
+
+          for path in files:
+              if not path.is_file():
+                  raise SystemExit(f"Fichier introuvable : {path}")
+
+              content = path.read_text(encoding="utf-8")
+
+              if "matchingFallbacks" in content:
+                  print(f"Correctif déjà présent : {path}")
+                  continue
+
+              marker = "android {"
+              if marker not in content:
+                  raise SystemExit(f"Bloc android introuvable : {path}")
+
+              replacement = """android {
+              buildTypes {
+                  standalone {
+                      matchingFallbacks = ['release']
+                  }
+              }"""
+
+              updated = content.replace(marker, replacement, 1)
+
+              if updated == content or "matchingFallbacks = ['release']" not in updated:
+                  raise SystemExit(f"Échec du correctif : {path}")
+
+              updates.append((path, updated))
+
+          for path, updated in updates:
+              path.write_text(updated, encoding="utf-8")
+              print(f"Correctif préparé : {path}")
+
+          print("Vérification des deux correctifs terminée.")
+          PY
+
+      - name: Create media3 compatibility link
+        run: |
+          if [ -L TMessagesProj_Modules/media3 ]; then
+            test "$(readlink TMessagesProj_Modules/media3)" = "media"
+          elif [ -e TMessagesProj_Modules/media3 ]; then
+            echo "Erreur : media3 existe mais n'est pas le lien attendu."
+            exit 1
+          else
+            ln -s media TMessagesProj_Modules/media3
+          fi
+          ls -ld TMessagesProj_Modules/media3
+
       - name: Install android-gcc-cross
         if: matrix.target == 'gcc'
         run: |
-          declare -r PINO_TARBALL='/tmp/gcc.tar.xz'
-          declare -r PINO_URL='https://github.com/AmanoTeam/android-gcc-cross/releases/latest/download/x86_64-unknown-linux-gnu.tar.xz'
-          
-          curl --connect-timeout '10' --retry '15' --retry-all-errors --fail --silent --location --url "${PINO_URL}" --output "${PINO_TARBALL}"
-          tar --directory="$(dirname "${PINO_TARBALL}")" --extract --file="${PINO_TARBALL}"
-          
-          echo 'PINO_LTO=full' >> "${GITHUB_ENV}"
-          echo 'PINO_OPT_LEVEL=2' >> "${GITHUB_ENV}"
-          echo 'PINO_HOME=/tmp/android-gcc-cross' >> "${GITHUB_ENV}"
-          # echo '/tmp/android-gcc-cross/bin' >> "${GITHUB_PATH}"
-          
+          PINO_TARBALL=/tmp/gcc.tar.xz
+          PINO_URL=https://github.com/AmanoTeam/android-gcc-cross/releases/latest/download/x86_64-unknown-linux-gnu.tar.xz
+
+          curl --connect-timeout 10 --retry 15 --retry-all-errors \
+            --fail --silent --location \
+            "$PINO_URL" --output "$PINO_TARBALL"
+
+          tar -C /tmp -xf "$PINO_TARBALL"
+
+          echo 'PINO_LTO=full' >> "$GITHUB_ENV"
+          echo 'PINO_OPT_LEVEL=2' >> "$GITHUB_ENV"
+          echo 'PINO_HOME=/tmp/android-gcc-cross' >> "$GITHUB_ENV"
+
           /tmp/android-gcc-cross/bin/ndk-patch
-      - name: Remove prebuilt binaries 
+
+      - name: Remove prebuilt static libraries
         run: |
-          find . -type f -wholename '*.a' -delete
-      - name: Build
+          find . -type f -name '*.a' -delete
+
+      - name: Build APK
         run: |
-          ./gradlew assembleAfatRelease
-          mv TMessagesProj_App/build/outputs/apk/afat/release/app.apk app-release.apk
-      - name: Create logs
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleAfatRelease
+          cp TMessagesProj_App/build/outputs/apk/afat/release/app.apk app-release.apk
+          test -s app-release.apk
+
+      - name: Save build logs
         if: always()
         run: |
-          tar --create --file=- '/var/tmp/obggcc' | xz --threads='0' --compress -9 > '/tmp/logs.tar.xz'
-      - name: Upload logs
-        if:  always()
-        uses: actions/upload-artifact@main
+          if [ -d /var/tmp/obggcc ]; then
+            tar -czf /tmp/build-logs.tar.gz -C /var/tmp obggcc
+          else
+            echo "Aucun dossier obggcc disponible." > /tmp/build-logs.txt
+          fi
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: logs
-          if-no-files-found: error
+          name: logs-${{ matrix.target }}
           path: |
-              /tmp/logs.tar.xz
-      - name: Upload artifact
-        uses: actions/upload-artifact@main
+            /tmp/build-logs.tar.gz
+            /tmp/build-logs.txt
+          if-no-files-found: ignore
+
+      - name: Upload APK
+        if: success()
+        uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.target }}
+          name: Goregram-Perso-${{ matrix.target }}
           path: app-release.apk
+          if-no-files-found: error

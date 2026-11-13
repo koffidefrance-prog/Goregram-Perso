@@ -224,8 +224,13 @@ public class GoregramInviteActivity extends Activity {
                     createButton.setEnabled(false);
                     nameInput.setEnabled(false);
                     passwordInput.setEnabled(false);
-                    showStatus("Votre compte Goregram a été créé avec succès. Conservez votre mot de passe : il sera nécessaire pour vous reconnecter.", false);
-                    createButton.setText("Compte créé");
+                    showStatus("Votre compte Goregram a été créé. Vous pouvez maintenant ouvrir vos discussions.", false);
+                    createButton.setText("Ouvrir Goregram");
+                    createButton.setEnabled(true);
+                    createButton.setOnClickListener(v -> {
+                        startActivity(new android.content.Intent(GoregramInviteActivity.this, GoregramActivity.class));
+                        finish();
+                    });
                 });
             } catch (Exception e) {
                 runOnUiThread(() -> {

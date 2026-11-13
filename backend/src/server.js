@@ -141,6 +141,38 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), 
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
+app.get('/api/conversations', requireAuth, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT c.id AS conversation_id, c.kind, c.title,
+              peer.id AS peer_id, peer.display_name AS peer_name, peer.phone_e164 AS peer_phone,
+              latest.body AS last_message, latest.created_at AS last_message_at
+       FROM conversations c
+       JOIN conversation_members me ON me.conversation_id = c.id AND me.user_id = $1
+       LEFT JOIN LATERAL (
+         SELECT u.id, u.display_name, u.phone_e164
+         FROM conversation_members cm
+         JOIN users u ON u.id = cm.user_id
+         WHERE cm.conversation_id = c.id AND cm.user_id <> me.user_id
+         ORDER BY cm.joined_at ASC
+         LIMIT 1
+       ) peer ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT m.body, m.created_at
+         FROM messages m
+         WHERE m.conversation_id = c.id
+         ORDER BY m.created_at DESC
+         LIMIT 1
+       ) latest ON TRUE
+       WHERE c.kind = 'direct'
+       ORDER BY COALESCE(latest.created_at, c.created_at) DESC
+       LIMIT 100`,
+      [req.user.id]
+    );
+    res.json({ conversations: result.rows });
+  } catch (error) { next(error); }
+});
+
 const invitePhoneSchema = z.object({ phone: phoneSchema });
 const inviteLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false });
 

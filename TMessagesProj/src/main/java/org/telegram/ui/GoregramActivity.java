@@ -124,6 +124,9 @@ public class GoregramActivity extends Activity {
         title("Bonjour " + myName);
         TextView sub = text("Vos discussions Goregram", 14, Color.rgb(205, 224, 214));
         content.addView(sub, spaced());
+        Button telegramDiagnostic = button("Assistant de diagnostic Telegram");
+        content.addView(telegramDiagnostic, spaced());
+        telegramDiagnostic.setOnClickListener(v -> showTelegramDiagnostic());
 
         LinearLayout newRow = new LinearLayout(this);
         newRow.setOrientation(LinearLayout.VERTICAL);
@@ -159,6 +162,61 @@ public class GoregramActivity extends Activity {
                 runOnUiThread(() -> showNotice(message(e)));
             }
         });
+    }
+
+    private void showTelegramDiagnostic() {
+        content.removeAllViews();
+        title("Diagnostic Telegram");
+        TextView intro = text(
+                "Décris le message affiché par Telegram. Le diagnostic fonctionne localement sur ton téléphone et n'envoie pas tes messages à un serveur.",
+                14, Color.rgb(205, 224, 214));
+        content.addView(intro, spaced());
+
+        EditText errorField = field("Colle le message ou le code d'erreur Telegram");
+        errorField.setSingleLine(false);
+        errorField.setMinLines(3);
+        content.addView(errorField, spaced());
+
+        TextView diagnosis = text("Le résultat apparaîtra ici.", 15, Color.WHITE);
+        diagnosis.setPadding(dp(14), dp(14), dp(14), dp(14));
+        diagnosis.setBackgroundColor(Color.rgb(13, 43, 32));
+        content.addView(diagnosis, spaced());
+
+        Button analyze = button("Analyser le blocage");
+        content.addView(analyze, spaced());
+        analyze.setOnClickListener(v -> {
+            String raw = errorField.getText().toString().trim();
+            String value = raw.toLowerCase(java.util.Locale.ROOT);
+            if (value.isEmpty()) {
+                diagnosis.setText("Colle d'abord le texte exact affiché par Telegram.");
+            } else if (value.contains("contacts communs") || value.contains("mutual contacts")
+                    || value.contains("only send messages to") || value.contains("can't message non-contacts")) {
+                diagnosis.setText("Restriction des nouveaux messages : Telegram limite ce compte aux personnes qui ont enregistré son numéro ou qui lui écrivent en premier. Goregram ne peut pas supprimer cette règle côté serveur. Essaie le recours officiel avec @SpamBot et évite les tentatives répétées.");
+            } else if (value.contains("peer_flood") || value.contains("flood_wait") || value.contains("too many requests")) {
+                diagnosis.setText("Limitation temporaire anti-abus ou de fréquence. Arrête les tentatives répétées et respecte le délai indiqué par Telegram. Une application tierce ne peut pas lever ce délai.");
+            } else if (value.contains("user_restricted") || value.contains("chat_write_forbidden")
+                    || value.contains("write forbidden") || value.contains("not enough rights")) {
+                diagnosis.setText("L'envoi est interdit dans cette conversation ou pour ce compte. Vérifie les permissions du groupe ou l'état du compte, puis utilise le recours officiel si tu penses qu'il s'agit d'une erreur.");
+            } else if (value.contains("phone_number_banned") || value.contains("banned")) {
+                diagnosis.setText("Telegram signale un compte ou un numéro bloqué. Il faut demander une vérification au support Telegram. Ne réinstalle pas l'application en boucle et ne partage aucun code de connexion.");
+            } else {
+                diagnosis.setText("Erreur non reconnue. Garde le texte exact et demande une vérification via l'aide officielle Telegram. Ce diagnostic ne modifie pas les restrictions du compte.");
+            }
+        });
+
+        Button appeal = button("Ouvrir le bot officiel @SpamBot");
+        content.addView(appeal, spaced());
+        appeal.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/SpamBot")));
+            } catch (Exception e) {
+                showNotice("Impossible d'ouvrir Telegram. Vérifie que l'application est installée.");
+            }
+        });
+
+        Button back = button("Retour aux discussions");
+        content.addView(back, spaced());
+        back.setOnClickListener(v -> loadConversations());
     }
 
     private void renderConversations(JSONArray rows) {

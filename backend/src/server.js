@@ -233,11 +233,12 @@ app.get('/invite', async (req, res, next) => {
     res.type('html').send(`<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow"><title>Invitation Goregram</title>
-<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#061a14;color:#f5f7f5;font-family:system-ui,-apple-system,sans-serif}.card{width:min(90%,420px);box-sizing:border-box;padding:30px;border:1px solid #24513d;border-radius:24px;background:#0d2b20;text-align:center}h1{color:#f2c94c}p{line-height:1.6;color:#d4e2d9}.mark{font-size:42px}small{color:#a8c2b2}</style></head>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#061a14;color:#f5f7f5;font-family:system-ui,-apple-system,sans-serif}.card{width:min(90%,420px);box-sizing:border-box;padding:30px;border:1px solid #24513d;border-radius:24px;background:#0d2b20;text-align:center}h1{color:#f2c94c}p{line-height:1.6;color:#d4e2d9}.mark{font-size:42px}small{color:#a8c2b2}.open{display:block;margin:24px 0;padding:15px;border-radius:12px;background:#f2c94c;color:#061a14;text-decoration:none;font-weight:700}</style></head>
 <body><main class="card"><div class="mark">✦</div><h1>Vous êtes invité sur Goregram</h1>
 <p><strong>${inviter}</strong> vous invite à rejoindre Goregram, votre espace de messagerie.</p>
 <p>Cette invitation est valide pendant 7 jours et réservée au numéro utilisé lors de l'inscription.</p>
-<p><strong>Comment continuer ?</strong><br>Ouvrez l'application Goregram et utilisez le lien d'invitation lors de la création de votre compte.</p>
+<p><strong>Comment continuer ?</strong><br>Appuyez sur le bouton ci-dessous pour ouvrir directement Goregram et créer votre compte.</p>
+<a class="open" href="goregram://invite?token=${encodeURIComponent(token)}">Ouvrir Goregram</a>
 <small>Ne partagez pas ce lien : il est personnel et utilisable une seule fois.</small></main></body></html>`);
   } catch (error) { next(error); }
 });

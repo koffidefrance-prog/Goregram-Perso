@@ -197,7 +197,21 @@ public class GoregramActivity extends Activity {
                 lookupBody.put("phone", phone);
                 JSONObject lookup = request("POST", "/api/contacts/lookup", lookupBody, true);
                 JSONObject contact = lookup.optJSONObject("contact");
-                if (contact == null) throw new Exception("Ce numéro n'a pas encore de compte Goregram. Vous pouvez lui partager un lien d'invitation.");
+                if (contact == null) {
+                    JSONObject invitation = request("POST", "/api/invitations", lookupBody, true);
+                    String link = invitation.optString("inviteLink", "");
+                    if (link.isEmpty()) throw new Exception("Le lien d'invitation n'a pas pu être généré.");
+                    runOnUiThread(() -> {
+                        busy(source, false);
+                        Intent share = new Intent(Intent.ACTION_SEND);
+                        share.setType("text/plain");
+                        share.putExtra(Intent.EXTRA_SUBJECT, "Invitation Goregram");
+                        share.putExtra(Intent.EXTRA_TEXT, "Je t'invite à rejoindre Goregram pour discuter avec moi : " + link);
+                        startActivity(Intent.createChooser(share, "Partager l’invitation Goregram"));
+                        showNotice("Lien d'invitation prêt. Partagez-le par WhatsApp, SMS ou une autre application.");
+                    });
+                    return;
+                }
                 JSONObject directBody = new JSONObject();
                 directBody.put("userId", contact.getLong("id"));
                 JSONObject created = request("POST", "/api/conversations/direct", directBody, true);

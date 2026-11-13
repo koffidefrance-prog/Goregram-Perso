@@ -6,6 +6,7 @@ on:
     branches:
       - master
       - goregram-backend-foundation
+      - goregram-telegram-diagnostic
 
 permissions:
   contents: read

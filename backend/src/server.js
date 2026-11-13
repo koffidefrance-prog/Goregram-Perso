@@ -3,6 +3,7 @@
 require('dotenv').config();
 const express = require('express');
 const http = require('http');
+const crypto = require('crypto');
 const cors = require('cors');
 const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
@@ -42,7 +43,8 @@ const phoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/, 'Phone must use intern
 const registerSchema = z.object({
   phone: phoneSchema,
   displayName: z.string().trim().min(2).max(80),
-  password: z.string().min(10).max(128)
+  password: z.string().min(10).max(128),
+  inviteToken: z.string().min(32).max(256).optional()
 });
 const loginSchema = z.object({ phone: phoneSchema, password: z.string().min(1).max(128) });
 const messageSchema = z.object({ body: z.string().trim().min(1).max(10000) });
@@ -80,17 +82,44 @@ app.get('/health', async (_req, res) => {
 app.post('/api/auth/register', rateLimit({ windowMs: 60 * 60 * 1000, limit: 10 }), async (req, res, next) => {
   try {
     const input = registerSchema.parse(req.body);
+    let invitation = null;
+    if (input.inviteToken) {
+      const tokenHash = crypto.createHash('sha256').update(input.inviteToken).digest('hex');
+      const found = await pool.query(
+        'SELECT id, inviter_user_id FROM invitations WHERE token_hash = $1 AND invitee_phone_e164 = $2 AND accepted_at IS NULL AND expires_at > NOW()',
+        [tokenHash, input.phone]
+      );
+      if (!found.rowCount) return res.status(400).json({ error: "Lien d'invitation invalide, expiré ou associé à un autre numéro." });
+      invitation = found.rows[0];
+    }
     const rounds = Math.min(14, Math.max(10, Number(process.env.BCRYPT_ROUNDS) || 12));
     const passwordHash = await bcrypt.hash(input.password, rounds);
-    const result = await pool.query(
-      'INSERT INTO users (phone_e164, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id, phone_e164, display_name',
-      [input.phone, input.displayName, passwordHash]
-    );
-    const user = result.rows[0];
-    res.status(201).json({ user, token: tokenFor(user), notice: 'Compte Goregram créé. La vérification du numéro sera ajoutée avant ouverture publique.' });
+    const client = await pool.connect();
+    let user;
+    try {
+      await client.query('BEGIN');
+      const result = await client.query(
+        'INSERT INTO users (phone_e164, display_name, password_hash) VALUES ($1, $2, $3) RETURNING id, phone_e164, display_name',
+        [input.phone, input.displayName, passwordHash]
+      );
+      user = result.rows[0];
+      if (invitation) {
+        const used = await client.query(
+          'UPDATE invitations SET accepted_at = NOW() WHERE id = $1 AND accepted_at IS NULL AND expires_at > NOW() RETURNING id',
+          [invitation.id]
+        );
+        if (!used.rowCount) throw Object.assign(new Error('Invitation already used'), { code: 'INVITE_USED' });
+      }
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally { client.release(); }
+    res.status(201).json({ user, token: tokenFor(user), invitedBy: invitation ? invitation.inviter_user_id : null });
   } catch (error) {
     if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0].message });
     if (error.code === '23505') return res.status(409).json({ error: 'Ce numéro possède déjà un compte Goregram.' });
+    if (error.code === 'INVITE_USED') return res.status(409).json({ error: 'Ce lien d’invitation a déjà été utilisé.' });
     next(error);
   }
 });
@@ -111,6 +140,60 @@ app.post('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10 }), 
 });
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: req.user }));
+
+const invitePhoneSchema = z.object({ phone: phoneSchema });
+const inviteLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false });
+
+app.post('/api/invitations', requireAuth, inviteLimiter, async (req, res, next) => {
+  try {
+    const input = invitePhoneSchema.parse(req.body);
+    const existing = await pool.query('SELECT id FROM users WHERE phone_e164 = $1', [input.phone]);
+    if (existing.rowCount) return res.status(409).json({ error: 'Ce numéro possède déjà un compte Goregram.' });
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+    await pool.query(
+      'INSERT INTO invitations (inviter_user_id, invitee_phone_e164, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL \'7 days\')',
+      [req.user.id, input.phone, tokenHash]
+    );
+    const appUrl = (process.env.PUBLIC_APP_URL || 'goregram://invite').replace(/\/$/, '');
+    const inviteLink = appUrl.includes('://') ? (appUrl.startsWith('goregram://') ? `${appUrl}?token=${encodeURIComponent(rawToken)}` : `${appUrl}/invite?token=${encodeURIComponent(rawToken)}`) : null;
+    if (!inviteLink) return res.status(503).json({ error: 'PUBLIC_APP_URL doit être configurée pour générer le lien de l’application.' });
+    const smsBody = `${req.user.display_name} vous invite à rejoindre Goregram. Créez votre compte ici : ${inviteLink} (lien valable 7 jours).`;
+    const hasTwilio = process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM;
+    if (hasTwilio) {
+      const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64');
+      const form = new URLSearchParams({ To: input.phone, From: process.env.TWILIO_FROM, Body: smsBody });
+      const sent = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${process.env.TWILIO_ACCOUNT_SID}/Messages.json`, {
+        method: 'POST', headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' }, body: form
+      });
+      if (!sent.ok) {
+        const detail = await sent.text();
+        console.error('SMS provider rejected invitation:', sent.status, detail.slice(0, 500));
+        return res.status(502).json({ error: "L'invitation a été créée, mais l'envoi du SMS a échoué. Vérifiez la configuration SMS." });
+      }
+      return res.status(201).json({ delivered: true, channel: 'sms', expiresInDays: 7 });
+    }
+    res.status(201).json({ delivered: false, channel: 'share_link', inviteLink, message: "Lien prêt à partager. Configurez le fournisseur SMS pour l'envoi automatique." });
+  } catch (error) {
+    if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0].message });
+    next(error);
+  }
+});
+
+app.get('/api/invitations/validate/:token', async (req, res, next) => {
+  try {
+    const tokenHash = crypto.createHash('sha256').update(String(req.params.token)).digest('hex');
+    const result = await pool.query(
+      `SELECT i.invitee_phone_e164, i.expires_at, u.display_name AS inviter_name
+       FROM invitations i JOIN users u ON u.id = i.inviter_user_id
+       WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.expires_at > NOW()`,
+      [tokenHash]
+    );
+    if (!result.rowCount) return res.status(404).json({ valid: false, error: 'Lien invalide ou expiré.' });
+    res.json({ valid: true, phone: result.rows[0].invitee_phone_e164, inviterName: result.rows[0].inviter_name, expiresAt: result.rows[0].expires_at });
+  } catch (error) { next(error); }
+});
+
 
 app.post('/api/contacts/lookup', requireAuth, async (req, res, next) => {
   try {

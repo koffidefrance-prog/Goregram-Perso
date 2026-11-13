@@ -152,7 +152,7 @@ app.post('/api/invitations', requireAuth, inviteLimiter, async (req, res, next) 
     const rawToken = crypto.randomBytes(32).toString('base64url');
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
     await pool.query(
-      'INSERT INTO invitations (inviter_user_id, invitee_phone_e164, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL \'7 days\')',
+      `INSERT INTO invitations (inviter_user_id, invitee_phone_e164, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '7 days')`,
       [req.user.id, input.phone, tokenHash]
     );
     const appUrl = (process.env.PUBLIC_APP_URL || 'goregram://invite').replace(/\/$/, '');

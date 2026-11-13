@@ -155,7 +155,7 @@ app.post('/api/invitations', requireAuth, inviteLimiter, async (req, res, next) 
       `INSERT INTO invitations (inviter_user_id, invitee_phone_e164, token_hash, expires_at) VALUES ($1, $2, $3, NOW() + INTERVAL '7 days')`,
       [req.user.id, input.phone, tokenHash]
     );
-    const appUrl = (process.env.PUBLIC_APP_URL || 'goregram://invite').replace(/\/$/, '');
+    const appUrl = (process.env.PUBLIC_APP_URL || 'https://goregram-api-production.up.railway.app').replace(/\/$/, '');
     const inviteLink = appUrl.includes('://') ? (appUrl.startsWith('goregram://') ? `${appUrl}?token=${encodeURIComponent(rawToken)}` : `${appUrl}/invite?token=${encodeURIComponent(rawToken)}`) : null;
     if (!inviteLink) return res.status(503).json({ error: 'PUBLIC_APP_URL doit être configurée pour générer le lien de l’application.' });
     const smsBody = `${req.user.display_name} vous invite à rejoindre Goregram. Créez votre compte ici : ${inviteLink} (lien valable 7 jours).`;
@@ -178,6 +178,36 @@ app.post('/api/invitations', requireAuth, inviteLimiter, async (req, res, next) 
     if (error instanceof z.ZodError) return res.status(400).json({ error: error.issues[0].message });
     next(error);
   }
+});
+
+app.get('/invite', async (req, res, next) => {
+  try {
+    const token = String(req.query.token || '');
+    if (!/^[A-Za-z0-9_-]{32,256}$/.test(token)) {
+      return res.status(400).type('html').send('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invitation Goregram</title><body style="font-family:system-ui;background:#071b14;color:#fff;padding:32px"><h1>Invitation invalide</h1><p>Ce lien Goregram est incomplet ou incorrect.</p></body></html>');
+    }
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const result = await pool.query(
+      `SELECT i.invitee_phone_e164, i.expires_at, u.display_name AS inviter_name
+       FROM invitations i JOIN users u ON u.id = i.inviter_user_id
+       WHERE i.token_hash = $1 AND i.accepted_at IS NULL AND i.expires_at > NOW()`,
+      [tokenHash]
+    );
+    if (!result.rowCount) {
+      return res.status(404).type('html').send('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Invitation Goregram</title><body style="font-family:system-ui;background:#071b14;color:#fff;padding:32px"><h1>Lien expiré ou déjà utilisé</h1><p>Demandez une nouvelle invitation à votre contact.</p></body></html>');
+    }
+    const inviter = String(result.rows[0].inviter_name).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    res.set('Cache-Control', 'no-store');
+    res.type('html').send(`<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow"><title>Invitation Goregram</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#061a14;color:#f5f7f5;font-family:system-ui,-apple-system,sans-serif}.card{width:min(90%,420px);box-sizing:border-box;padding:30px;border:1px solid #24513d;border-radius:24px;background:#0d2b20;text-align:center}h1{color:#f2c94c}p{line-height:1.6;color:#d4e2d9}.mark{font-size:42px}small{color:#a8c2b2}</style></head>
+<body><main class="card"><div class="mark">✦</div><h1>Vous êtes invité sur Goregram</h1>
+<p><strong>${inviter}</strong> vous invite à rejoindre Goregram, votre espace de messagerie.</p>
+<p>Cette invitation est valide pendant 7 jours et réservée au numéro utilisé lors de l'inscription.</p>
+<p><strong>Comment continuer ?</strong><br>Ouvrez l'application Goregram et utilisez le lien d'invitation lors de la création de votre compte.</p>
+<small>Ne partagez pas ce lien : il est personnel et utilisable une seule fois.</small></main></body></html>`);
+  } catch (error) { next(error); }
 });
 
 app.get('/api/invitations/validate/:token', async (req, res, next) => {

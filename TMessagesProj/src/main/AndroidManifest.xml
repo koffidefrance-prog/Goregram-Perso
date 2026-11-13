@@ -208,6 +208,12 @@
         </activity-alias>
 
         <activity
+            android:name="org.telegram.ui.GoregramActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name="org.telegram.ui.GoregramInviteActivity"
             android:exported="true"
             android:launchMode="singleTop"

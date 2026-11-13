@@ -412,8 +412,14 @@ public class GoregramActivity extends Activity {
     }
 
     private void busy(Button b, boolean value) {
+        if (value) {
+            if (b.getTag() == null) b.setTag(b.getText());
+            b.setText("Patientez…");
+        } else if (b.getTag() != null) {
+            b.setText(String.valueOf(b.getTag()));
+            b.setTag(null);
+        }
         b.setEnabled(!value);
-        if (value) b.setText("Patientez…");
     }
 
     @Override

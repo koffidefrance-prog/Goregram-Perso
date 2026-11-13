@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - master
+      - goregram-backend-foundation
 
 permissions:
   contents: read

@@ -65,9 +65,9 @@ app.post('/auth/request-otp', async (req, res) => {
   const ttl = Math.min(Math.max(Number(process.env.OTP_TTL_SECONDS || 300), 60), 600);
   try {
     await sendSms(phone, code);
-    await pool.query(\`INSERT INTO phone_otps(phone_e164, code_hash, expires_at, attempts)
+    await pool.query(`INSERT INTO phone_otps(phone_e164, code_hash, expires_at, attempts)
       VALUES($1,$2,NOW()+($3 || ' seconds')::interval,0)
-      ON CONFLICT(phone_e164) DO UPDATE SET code_hash=EXCLUDED.code_hash, expires_at=EXCLUDED.expires_at, attempts=0, created_at=NOW()\`,
+      ON CONFLICT(phone_e164) DO UPDATE SET code_hash=EXCLUDED.code_hash, expires_at=EXCLUDED.expires_at, attempts=0, created_at=NOW()`,
       [phone, hashOtp(phone, code), String(ttl)]);
     res.json({ ok: true, expires_in: ttl });
   } catch (e) {
@@ -94,10 +94,10 @@ app.post('/auth/verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'OTP_EXPIRED_OR_INVALID' });
     }
     await client.query('DELETE FROM phone_otps WHERE phone_e164=$1', [phone]);
-    const userResult = await client.query(\`INSERT INTO users(phone_e164, display_name, created_at, updated_at, last_seen_at)
+    const userResult = await client.query(`INSERT INTO users(phone_e164, display_name, created_at, updated_at, last_seen_at)
       VALUES($1, 'Utilisateur', NOW(), NOW(), NOW())
       ON CONFLICT(phone_e164) DO UPDATE SET last_seen_at=NOW(), updated_at=NOW()
-      RETURNING id, phone_e164, display_name, avatar_url\`, [phone]);
+      RETURNING id, phone_e164, display_name, avatar_url`, [phone]);
     await client.query('COMMIT');
     const user = userResult.rows[0];
     res.json({ token: sign(user), user });
@@ -127,7 +127,7 @@ app.get('/users/lookup', auth, async (req, res) => {
   res.json(r.rows[0]);
 });
 app.get('/conversations', auth, async (req, res) => {
-  const r = await pool.query(\`
+  const r = await pool.query(`
     SELECT c.id AS conversation_id, u.id AS user_id, u.phone_e164, u.display_name, u.avatar_url,
       m.body AS last_message, m.created_at AS last_message_at
     FROM conversation_members mine
@@ -136,17 +136,17 @@ app.get('/conversations', auth, async (req, res) => {
     JOIN users u ON u.id=other.user_id
     LEFT JOIN LATERAL (SELECT body,created_at FROM messages WHERE conversation_id=c.id ORDER BY created_at DESC LIMIT 1) m ON TRUE
     WHERE mine.user_id=$1 ORDER BY m.created_at DESC NULLS LAST LIMIT 100
-  \`, [req.user.sub]);
+  `, [req.user.sub]);
   res.json(r.rows);
 });
 async function findOrCreateDirectConversation(client, firstId, secondId) {
-  const existing = await client.query(\`
+  const existing = await client.query(`
     SELECT c.id FROM conversations c
     JOIN conversation_members a ON a.conversation_id=c.id AND a.user_id=$1
     JOIN conversation_members b ON b.conversation_id=c.id AND b.user_id=$2
     WHERE c.kind='direct' AND (SELECT COUNT(*) FROM conversation_members cm WHERE cm.conversation_id=c.id)=2
     LIMIT 1
-  \`, [firstId, secondId]);
+  `, [firstId, secondId]);
   if (existing.rowCount) return existing.rows[0].id;
   const c = await client.query("INSERT INTO conversations(kind,created_by) VALUES('direct',$1) RETURNING id", [firstId]);
   await client.query('INSERT INTO conversation_members(conversation_id,user_id) VALUES($1,$2),($1,$3) ON CONFLICT DO NOTHING', [c.rows[0].id, firstId, secondId]);
@@ -172,24 +172,24 @@ app.post('/messages', auth, async (req, res) => {
 app.get('/messages/:userId', auth, async (req, res) => {
   const other = Number(req.params.userId);
   if (!Number.isSafeInteger(other) || other < 1 || other === Number(req.user.sub)) return res.status(400).json({ error: 'INVALID_USER' });
-  const r = await pool.query(\`
+  const r = await pool.query(`
     SELECT m.id,m.conversation_id,m.sender_id,m.body,m.created_at,m.read_at
     FROM messages m
     JOIN conversation_members a ON a.conversation_id=m.conversation_id AND a.user_id=$1
     JOIN conversation_members b ON b.conversation_id=m.conversation_id AND b.user_id=$2
     ORDER BY m.created_at ASC LIMIT 200
-  \`, [req.user.sub, other]);
+  `, [req.user.sub, other]);
   res.json(r.rows);
 });
 app.post('/messages/:messageId/read', auth, async (req, res) => {
   const id = Number(req.params.messageId);
   if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'INVALID_MESSAGE' });
-  const r = await pool.query(\`
+  const r = await pool.query(`
     UPDATE messages m SET read_at=NOW()
     WHERE m.id=$1 AND m.sender_id<>$2
       AND EXISTS(SELECT 1 FROM conversation_members cm WHERE cm.conversation_id=m.conversation_id AND cm.user_id=$2)
     RETURNING m.id,m.read_at
-  \`, [id, req.user.sub]);
+  `, [id, req.user.sub]);
   if (!r.rowCount) return res.status(404).json({ error: 'MESSAGE_NOT_FOUND' });
   res.json(r.rows[0]);
 });

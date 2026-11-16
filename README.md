@@ -1,6 +1,6 @@
 # GOREGRAM PERSO — messagerie indépendante
 
-Cette branche contient une reconstruction indépendante de Telegram : client Android natif, API propriétaire et base PostgreSQL. La branche `master` est conservée intacte.
+Cette branche contient une reconstruction indépendante de Telegram : client Android natif, API propriétaire et base PostgreSQL. L'ancien code Telegram est conservé séparément dans la branche `telegram-source-archive`; la branche `master` contient désormais le projet indépendant.
 
 ## État
 - Authentification par numéro E.164 et OTP : API prête, nécessite un fournisseur SMS configuré.

@@ -1,7 +1,7 @@
 name: Build Goregram independent
 on:
   push:
-    branches: [independent-server-rebuild]
+    branches: [master, independent-server-rebuild]
   workflow_dispatch:
 jobs:
   server:

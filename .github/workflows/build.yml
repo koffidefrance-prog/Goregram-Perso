@@ -1,188 +1,35 @@
-name: Build Goregram Perso
-
+name: Build Goregram independent
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - master
-
-permissions:
-  contents: read
-
+    branches: [independent-server-rebuild]
+  workflow_dispatch:
 jobs:
-  build:
-    name: Build APK (${{ matrix.target }})
+  server:
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [gcc, clang]
-
+    defaults:
+      run:
+        working-directory: server
     steps:
-      - name: Checkout repository and submodules
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          submodules: recursive
-
-      - name: Set swap space
-        uses: pierotofy/set-swap-space@master
-        with:
-          swap-size-gb: 30
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+          node-version: 22
+      - run: npm install
+      - run: npm test
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y meson gperf
-
-      - name: Apply Android library compatibility patches
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          files = [
-              Path("TMessagesProj/lib/jlatexmath/jlatexmath/build.gradle"),
-              Path("TMessagesProj_Modules/media/common_library_config.gradle"),
-          ]
-
-          updates = []
-
-          for path in files:
-              if not path.is_file():
-                  raise SystemExit(f"Fichier introuvable : {path}")
-
-              content = path.read_text(encoding="utf-8")
-
-              if "matchingFallbacks" in content:
-                  print(f"Correctif déjà présent : {path}")
-                  continue
-
-              marker = "android {"
-              if marker not in content:
-                  raise SystemExit(f"Bloc android introuvable : {path}")
-
-              replacement = """android {
-              buildTypes {
-                  standalone {
-                      matchingFallbacks = ['release']
-                  }
-              }"""
-
-              updated = content.replace(marker, replacement, 1)
-
-              if updated == content or "matchingFallbacks = ['release']" not in updated:
-                  raise SystemExit(f"Échec du correctif : {path}")
-
-              updates.append((path, updated))
-
-          for path, updated in updates:
-              path.write_text(updated, encoding="utf-8")
-              print(f"Correctif préparé : {path}")
-
-          print("Vérification des deux correctifs terminée.")
-          PY
-
-      - name: Patch LibreSSL generated EC curve header
-        run: |
-          python3 - <<'PYTHON'
-          from pathlib import Path
-
-          path = Path("TMessagesProj/jni/libressl/update.sh")
-          if not path.is_file():
-              raise SystemExit("Script LibreSSL introuvable.")
-
-          source = path.read_text(encoding="utf-8")
-          marker = "# add the libcrypto symbol export list"
-
-          patch = '''# Copy the generated OpenBSD EC curve table header.
-          if [ ! -f "$libcrypto_src/ec/ec_curve_tables.h" ]; then
-              echo "Erreur : ec_curve_tables.h absent de la source OpenBSD."
-              exit 1
-          fi
-          mkdir -p crypto/ec
-          $CP "$libcrypto_src/ec/ec_curve_tables.h" crypto/ec/ec_curve_tables.h
-
-          '''
-
-          if "Copy the generated OpenBSD EC curve table header." not in source:
-              if marker not in source:
-                  raise SystemExit("Point d'insertion LibreSSL introuvable.")
-              source = source.replace(marker, patch + marker, 1)
-              path.write_text(source, encoding="utf-8")
-
-          print("Correctif LibreSSL prêt.")
-          PYTHON
-
-      - name: Create media3 compatibility link
-        run: |
-          if [ -L TMessagesProj_Modules/media3 ]; then
-            test "$(readlink TMessagesProj_Modules/media3)" = "media"
-          elif [ -e TMessagesProj_Modules/media3 ]; then
-            echo "Erreur : media3 existe mais n'est pas le lien attendu."
-            exit 1
-          else
-            ln -s media TMessagesProj_Modules/media3
-          fi
-          ls -ld TMessagesProj_Modules/media3
-
-      - name: Install android-gcc-cross
-        if: matrix.target == 'gcc'
-        run: |
-          PINO_TARBALL=/tmp/gcc.tar.xz
-          PINO_URL=https://github.com/AmanoTeam/android-gcc-cross/releases/latest/download/x86_64-unknown-linux-gnu.tar.xz
-
-          curl --connect-timeout 10 --retry 15 --retry-all-errors \
-            --fail --silent --location \
-            "$PINO_URL" --output "$PINO_TARBALL"
-
-          tar -C /tmp -xf "$PINO_TARBALL"
-
-          echo 'PINO_LTO=full' >> "$GITHUB_ENV"
-          echo 'PINO_OPT_LEVEL=2' >> "$GITHUB_ENV"
-          echo 'PINO_HOME=/tmp/android-gcc-cross' >> "$GITHUB_ENV"
-
-          /tmp/android-gcc-cross/bin/ndk-patch
-
-      - name: Remove prebuilt static libraries
-        run: |
-          find . -type f -name '*.a' -delete
-
-      - name: Build APK
-        run: |
-          chmod +x gradlew
-          ./gradlew --no-daemon assembleAfatRelease
-          cp TMessagesProj_App/build/outputs/apk/afat/release/app.apk app-release.apk
-          test -s app-release.apk
-
-      - name: Save build logs
-        if: always()
-        run: |
-          if [ -d /var/tmp/obggcc ]; then
-            tar -czf /tmp/build-logs.tar.gz -C /var/tmp obggcc
-          else
-            echo "Aucun dossier obggcc disponible." > /tmp/build-logs.txt
-          fi
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
         with:
-          name: logs-${{ matrix.target }}
-          path: |
-            /tmp/build-logs.tar.gz
-            /tmp/build-logs.txt
-          if-no-files-found: ignore
-
-      - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
+          gradle-version: 8.9
+      - run: cd android && gradle assembleDebug
+      - uses: actions/upload-artifact@v4
         with:
-          name: Goregram-Perso-${{ matrix.target }}
-          path: app-release.apk
-          if-no-files-found: error
+          name: goregram-perso-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk

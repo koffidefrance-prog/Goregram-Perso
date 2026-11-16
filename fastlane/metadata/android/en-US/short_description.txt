@@ -1,1 +1,0 @@
-A Telegram fork with minimal extra features

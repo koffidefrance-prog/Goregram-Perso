@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: goregram
+      POSTGRES_USER: goregram
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-goregram_local}
+    volumes:
+      - goregram_db:/var/lib/postgresql/data
+      - ./server/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goregram -d goregram"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build: ./server
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://goregram:${POSTGRES_PASSWORD:-goregram_local}@db:5432/goregram
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  goregram_db:

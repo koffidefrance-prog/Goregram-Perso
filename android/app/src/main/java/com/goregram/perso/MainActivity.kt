@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -15,7 +16,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +68,19 @@ private suspend fun getMessages(token: String, recipientId: String): List<JSONOb
     }
 }
 
+private suspend fun getConversations(token: String): List<JSONObject> = withContext(Dispatchers.IO) {
+    val request = Request.Builder()
+        .url(BuildConfig.API_BASE_URL.trimEnd('/') + "/conversations")
+        .header("Authorization", "Bearer $token")
+        .get().build()
+    httpClient.newCall(request).execute().use { response ->
+        val raw = response.body?.string().orEmpty()
+        if (!response.isSuccessful) throw IllegalStateException("Chargement des conversations impossible")
+        val rows = JSONArray(raw)
+        (0 until rows.length()).map { rows.getJSONObject(it) }
+    }
+}
+
 @Composable
 fun GoregramApp() {
     val context = LocalContext.current
@@ -83,6 +96,7 @@ fun GoregramApp() {
     var recipientName by remember { mutableStateOf("") }
     var draft by remember { mutableStateOf("") }
     var messages by remember { mutableStateOf(listOf<JSONObject>()) }
+    var conversations by remember { mutableStateOf(listOf<JSONObject>()) }
     var status by remember { mutableStateOf("Bienvenue sur ta messagerie indépendante.") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
@@ -94,6 +108,7 @@ fun GoregramApp() {
                 myId = me.optString("id")
                 myName = me.optString("display_name", "Utilisateur")
                 prefs.edit().putString("user_id", myId).putString("display_name", myName).apply()
+                conversations = getConversations(token)
                 status = "Connecté en tant que $myName"
             } catch (e: Exception) {
                 token = ""
@@ -214,7 +229,10 @@ fun GoregramApp() {
                         }
                     }, modifier = Modifier.fillMaxWidth()) { Text("Rechercher et ouvrir") }
                     if (recipientId.isNotBlank()) {
-                        Text("Conversation : $recipientName", style = MaterialTheme.typography.titleMedium)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Conversation : $recipientName", style = MaterialTheme.typography.titleMedium)
+                            TextButton(onClick = { recipientId = ""; messages = emptyList() }) { Text("Retour") }
+                        }
                         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(messages) { msg ->
                                 val mine = msg.optString("sender_id") == myId
@@ -230,6 +248,7 @@ fun GoregramApp() {
                                 try {
                                     apiCall("messages", "POST", token, JSONObject().put("recipient_id", recipientId.toLong()).put("body", draft.trim()))
                                     messages = getMessages(token, recipientId)
+                                    conversations = getConversations(token)
                                     draft = ""
                                     status = "Message envoyé."
                                 } catch (e: Exception) { status = e.message ?: "Envoi impossible" }
@@ -243,7 +262,32 @@ fun GoregramApp() {
                             }
                         }) { Text("Actualiser les messages") }
                     } else {
-                        Spacer(Modifier.weight(1f))
+                        Text("Mes conversations", style = MaterialTheme.typography.titleMedium)
+                        if (conversations.isEmpty()) {
+                            Text("Aucune conversation pour le moment. Recherche un numéro pour commencer.", style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.weight(1f))
+                        } else {
+                            LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+                                items(conversations) { conversation ->
+                                    Column(
+                                        Modifier.fillMaxWidth().clickable {
+                                            recipientId = conversation.optString("user_id")
+                                            recipientName = conversation.optString("display_name", "Contact")
+                                            scope.launch {
+                                                try {
+                                                    messages = getMessages(token, recipientId)
+                                                    status = "Conversation avec $recipientName"
+                                                } catch (e: Exception) { status = e.message ?: "Erreur" }
+                                            }
+                                        }.padding(vertical = 12.dp, horizontal = 8.dp)
+                                    ) {
+                                        Text(conversation.optString("display_name", "Contact"), style = MaterialTheme.typography.titleSmall)
+                                        Text(conversation.optString("last_message", "Aucun message"), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                                    }
+                                    HorizontalDivider()
+                                }
+                            }
+                        }
                     }
                     Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground)
                 }

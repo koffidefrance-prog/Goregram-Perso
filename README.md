@@ -1,23 +1,22 @@
 # GOREGRAM PERSO — messagerie indépendante
 
-Goregram Perso devient une application de messagerie indépendante. Cette branche repart d'une base neuve : aucun client Telegram, aucune API Telegram et aucun serveur Telegram.
+Cette branche contient une reconstruction indépendante de Telegram : client Android natif, API propriétaire et base PostgreSQL. La branche `master` est conservée intacte.
 
-## Architecture
-- Android : Kotlin + Jetpack Compose.
-- Serveur : Node.js, Express, PostgreSQL et WebSocket.
-- Inscription : numéro de téléphone au format international E.164, vérification par SMS.
-- Médias : stockage objet S3-compatible (à configurer avant la mise en production).
-- Notifications : Firebase Cloud Messaging (à configurer).
+## État
+- Authentification par numéro E.164 et OTP : API prête, nécessite un fournisseur SMS configuré.
+- Profils, recherche exacte par numéro, conversations directes, messages texte et WebSocket : fondation serveur implémentée.
+- Android Compose : interface de connexion et messagerie de base.
+- Les appels audio/vidéo, groupes, pièces jointes, notifications push, chiffrement de bout en bout et synchronisation du carnet d'adresses ne sont pas encore implémentés.
 
-## Démarrage du serveur
-1. Copier `.env.example` vers `.env` et renseigner les secrets.
-2. Lancer `docker compose up --build`.
-3. L'API écoute sur le port 8080.
+## Serveur
+Variables obligatoires : `DATABASE_URL`, `JWT_SECRET`, `OTP_HASH_SECRET`. En production, ajouter les identifiants d'un fournisseur SMS. Ne jamais utiliser de code OTP fixe en production.
+Le schéma SQL est idempotent et préserve les tables existantes.
 
-Sans identifiants SMS, l'envoi OTP échoue volontairement en mode production. Ne jamais activer de code OTP fixe en production.
+## Déploiement gratuit
+Le service web gratuit Render peut se mettre en veille après inactivité. Neon Free fournit PostgreSQL avec quotas et mise en veille. Ces offres peuvent changer et ne garantissent pas une disponibilité 24/7. La livraison réelle des SMS peut entraîner des frais.
 
 ## Android
-Ouvrir le dossier `android/` dans Android Studio ou lancer `./gradlew assembleDebug` dans un environnement Android configuré. Définir l'URL de l'API via `API_BASE_URL`.
+Ouvrir `android/` avec Android Studio ou utiliser le workflow GitHub Actions. L'URL API doit être configurée dans `android/app/build.gradle.kts` avant de distribuer l'APK.
 
-## Sécurité et limites
-Le code fournit une fondation d'authentification et de transport temps réel, pas encore un produit prêt pour des utilisateurs réels. Avant publication : configurer un fournisseur SMS, FCM, stockage privé, sauvegardes, supervision, politique de confidentialité, tests de charge et audit de sécurité. Le chiffrement de bout en bout n'est pas encore implémenté et ne doit pas être revendiqué.
+## Sécurité
+Transport HTTPS requis en production. Ce projet ne revendique pas le chiffrement de bout en bout. Faire auditer le système avant un lancement public.

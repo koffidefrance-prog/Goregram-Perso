@@ -15,12 +15,16 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -95,6 +99,32 @@ fun GoregramApp() {
                 token = ""
                 prefs.edit().clear().apply()
                 status = e.message ?: "Session expirée"
+            }
+        }
+    }
+
+    LaunchedEffect(token, recipientId) {
+        if (token.isNotBlank() && recipientId.isNotBlank()) {
+            val wsUrl = BuildConfig.API_BASE_URL.trimEnd('/')
+                .replaceFirst("https://", "wss://")
+                .replaceFirst("http://", "ws://") + "/ws"
+            val wsRequest = Request.Builder().url(wsUrl).header("Authorization", "Bearer $token").build()
+            val socket = httpClient.newWebSocket(wsRequest, object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    if (text.contains("message") && text.contains("type")) {
+                        scope.launch {
+                            try { messages = getMessages(token, recipientId) } catch (_: Exception) { }
+                        }
+                    }
+                }
+            })
+            try {
+                while (true) {
+                    delay(12000)
+                    try { messages = getMessages(token, recipientId) } catch (_: Exception) { }
+                }
+            } finally {
+                socket.close(1000, "Conversation closed")
             }
         }
     }

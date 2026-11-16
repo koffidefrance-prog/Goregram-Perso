@@ -202,7 +202,7 @@ server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://localhost');
   if (url.pathname !== '/ws') return socket.destroy();
   try {
-    const token = url.searchParams.get('token') || '';
+    const token = (req.headers.authorization || '').replace(/^Bearer /, '') || url.searchParams.get('token') || '';
     const user = jwt.verify(token, jwtSecret || 'local-development-secret-change-me', { issuer: 'goregram-api' });
     wss.handleUpgrade(req, socket, head, ws => {
       const id = String(user.sub);
